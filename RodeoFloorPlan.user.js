@@ -5,6 +5,8 @@
 // @description  Visualizes Rodeo cages with dynamic dwell thresholds (Purple > 2h) and ESD highlights (Blue for future dates). Starts minimized.
 // @author       RB
 // @match        https://rodeo.eu.aftx.amazonoperations.app/*PickingPicked*
+// @updateURL    https://github.com/RBCeva/TM/raw/refs/heads/main/SIOC.user.js
+// @downloadURL  https://github.com/RBCeva/TM/raw/refs/heads/main/SIOC.user.js
 // @grant        none
 // ==/UserScript==
 
