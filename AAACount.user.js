@@ -6,8 +6,8 @@
 // @match        https://atlas.na.aftx.amazonoperations.app/*
 // @connect      qifcr.eu.aftx.amazonoperations.app
 // @connect      aaacount.bambura-r.workers.dev
-// @updateURL    https://github.com/RBCeva/TamperMonkey/raw/refs/heads/main/AAA%20Count.user.js
-// @downloadURL  https://github.com/RBCeva/TamperMonkey/raw/refs/heads/main/AAA%20Count.user.js
+// @updateURL    https://github.com/RBCeva/TM/raw/refs/heads/main/AAACount.user.js
+// @downloadURL  https://github.com/RBCeva/TM/raw/refs/heads/main/AAACount.user.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
