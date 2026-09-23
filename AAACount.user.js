@@ -20,9 +20,9 @@
     const WAREHOUSE_ID = 'XFR9';
     const QIFCR_BASE = 'https://qifcr.eu.aftx.amazonoperations.app';
     const DUPLICATE_COOLDOWN_MS = 60000;
-    const CLEAR_LOG_PASSWORD = 'Andriiiii';
-    const VIEW_LOG_PASSWORD = 'Andriiiii';
-    const INVENTORY_VIEW_PASSWORD = 'Andriiiii';
+    const CLEAR_LOG_PASSWORD = 'RRR';
+    const VIEW_LOG_PASSWORD = 'RRR';
+    const INVENTORY_VIEW_PASSWORD = 'RRR';
 
     // Smartsheet Proxy Configuration
     const PROXY_URL = 'https://aaacount.bambura-r.workers.dev';
