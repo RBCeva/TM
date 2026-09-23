@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AAA Count
 // @namespace    http://tampermonkey.net/
-// @version      11.6
+// @version      11.8
 // @description  Full-screen terminal (full width layout) with unblocked copy/paste, manual text editing, user tracking, automated Smartsheet log submission via secure worker, special character restriction, centered tip below input, and updated scan match priority logic.
 // @match        https://atlas.na.aftx.amazonoperations.app/*
 // @connect      qifcr.eu.aftx.amazonoperations.app
@@ -28,6 +28,7 @@
     const PROXY_URL = 'https://aaacount.bambura-r.workers.dev';
     const SCAN_SHEET_ID = '38633198538628';
     const SUMMARY_SHEET_ID = '894335907483524';
+    const WRONG_SCAN_COLUMN_ID = 8254969381425028;
 
     // Reset user state on page open / refresh
     let currentUser = '';
@@ -337,6 +338,7 @@
         const summary = entry.summary || null;
         const locationTimestamp = entry.timestamp ? new Date(entry.timestamp).toISOString() : '';
 
+        // Push Scan Level Logs
         if (items.length > 0) {
             const scanRows = items.map(item => ({
                 toBottom: true,
@@ -348,12 +350,13 @@
                     { columnId: 4292483607203716, value: item.matchedFnsku || 'N/A' },
                     { columnId: 8796083234574212, value: item.isRecognized ? 'TRUE' : 'FALSE' },
                     { columnId: 611688044597124,  value: item.time || '' },
-                    { columnId: 999999999999999,  value: item.isWrongScan ? 'TRUE' : 'FALSE' }
+                    { columnId: 4152688578957188, value: item.isWrongScan ? 'TRUE' : 'FALSE' }
                 ]
             }));
             postToSmartsheet(SCAN_SHEET_ID, scanRows);
         }
 
+        // Push Location Summary Logs
         if (summary && summary.fnskuCounts) {
             const summaryRows = Object.keys(summary.fnskuCounts).map(fnskuKey => {
                 const bData = summary.fnskuCounts[fnskuKey];
@@ -369,7 +372,8 @@
                         { columnId: 8108469707902852, value: bData.variance },
                         { columnId: 3604870080532356, value: bData.mismatch ? 'TRUE' : 'FALSE' },
                         { columnId: 5856669894217604, value: summary.isMismatch ? 'TRUE' : 'FALSE' },
-                        { columnId: 1353070266847108, value: summary.finishedAt || '' }
+                        { columnId: 1353070266847108, value: summary.finishedAt || '' },
+                        { columnId: WRONG_SCAN_COLUMN_ID, value: bData.wrongScanCount || 0 }
                     ]
                 };
             });
@@ -662,10 +666,17 @@
         if (!locEntry) return;
 
         const physicalCountsByFnsku = {};
+        const wrongScanCountsByFnsku = {};
         let totalScannedQty = 0;
+
         (locEntry.scannedItems || []).forEach(item => {
             const resolvedFnsku = item.matchedFnsku || item.barcode;
             physicalCountsByFnsku[resolvedFnsku] = (physicalCountsByFnsku[resolvedFnsku] || 0) + 1;
+
+            if (item.isWrongScan) {
+                wrongScanCountsByFnsku[resolvedFnsku] = (wrongScanCountsByFnsku[resolvedFnsku] || 0) + 1;
+            }
+
             totalScannedQty++;
         });
 
@@ -677,11 +688,19 @@
         allTrackedFnskus.forEach(fnsku => {
             const fetched = currentFnskuCounts[fnsku] || 0;
             const scanned = physicalCountsByFnsku[fnsku] || 0;
+            const wrongScanCount = wrongScanCountsByFnsku[fnsku] || 0;
             const variance = scanned - fetched;
             const mismatch = fetched !== scanned;
             totalFetchedQty += fetched;
             if (mismatch) isMismatch = true;
-            fnskuCounts[fnsku] = { fetchedQty: fetched, scannedQty: scanned, variance: variance, mismatch: mismatch };
+
+            fnskuCounts[fnsku] = {
+                fetchedQty: fetched,
+                scannedQty: scanned,
+                wrongScanCount: wrongScanCount,
+                variance: variance,
+                mismatch: mismatch
+            };
         });
 
         locEntry.summary = {
@@ -813,7 +832,7 @@
         const locations = Object.keys(fullLogs);
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         let scanRows = [['Location', 'User', 'Location Timestamp', 'Scanned Barcode', 'Matched FNSKU', 'Is Recognized', 'Wrong Scan', 'Scan Time']];
-        let summaryRows = [['Location', 'User', 'Location Timestamp', 'FNSKU', 'Fetched FNSKU Qty', 'Scanned FNSKU Qty', 'FNSKU Variance', 'Is FNSKU Mismatch', 'Location Overall Mismatch', 'Finished At']];
+        let summaryRows = [['Location', 'User', 'Location Timestamp', 'FNSKU', 'Fetched FNSKU Qty', 'Scanned FNSKU Qty', 'Wrong Scan Qty', 'FNSKU Variance', 'Is FNSKU Mismatch', 'Location Overall Mismatch', 'Finished At']];
 
         locations.forEach(locKey => {
             const entry = fullLogs[locKey];
@@ -825,7 +844,7 @@
             if (entry.summary && entry.summary.fnskuCounts) {
                 Object.keys(entry.summary.fnskuCounts).forEach(fnskuKey => {
                     const bData = entry.summary.fnskuCounts[fnskuKey];
-                    summaryRows.push([locKey, user, locTime, fnskuKey, bData.fetchedQty, bData.scannedQty, bData.variance, bData.mismatch ? 'TRUE' : 'FALSE', entry.summary.isMismatch ? 'TRUE' : 'FALSE', entry.summary.finishedAt || '']);
+                    summaryRows.push([locKey, user, locTime, fnskuKey, bData.fetchedQty, bData.scannedQty, bData.wrongScanCount || 0, bData.variance, bData.mismatch ? 'TRUE' : 'FALSE', entry.summary.isMismatch ? 'TRUE' : 'FALSE', entry.summary.finishedAt || '']);
                 });
             }
         });
@@ -871,9 +890,9 @@
             let isWrongScan = false;
             let matchedFnsku = currentBarcodeToFnskuMap[value] || null;
 
-            const matchedRecord = currentInventoryRecords.find(rec => 
-                (rec.lpn && rec.lpn === value) || 
-                (rec.fnsku && rec.fnsku === value) || 
+            const matchedRecord = currentInventoryRecords.find(rec =>
+                (rec.lpn && rec.lpn === value) ||
+                (rec.fnsku && rec.fnsku === value) ||
                 (rec.asin && rec.asin === value)
             );
 
