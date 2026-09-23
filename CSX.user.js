@@ -6,8 +6,8 @@
 // @match        https://taskui-web.eu.aftx.amazonoperations.app/*
 // @match        https://data.pendo.aft.amazon.dev/data/rec/*
 // @connect      qifcr.eu.aftx.amazonoperations.app
-// @updateURL    https://github.com/RBCeva/TamperMonkey/raw/refs/heads/main/CSX%20Guard.user.js
-// @downloadURL  https://github.com/RBCeva/TamperMonkey/raw/refs/heads/main/CSX%20Guard.user.js
+// @updateURL    https://github.com/RBCeva/TM/raw/refs/heads/main/CSX.user.js
+// @downloadURL  https://github.com/RBCeva/TM/raw/refs/heads/main/CSX.user.js
 // @grant        GM_xmlhttpRequest
 // @run-at       document-end
 // ==/UserScript==
