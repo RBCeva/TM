@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AAA Count
 // @namespace    http://tampermonkey.net/
-// @version      11.5
-// @description  Full-screen terminal (full width layout) with unblocked copy/paste, manual text editing, user tracking, automated Smartsheet log submission via secure worker, special character restriction, and centered tip below input.
+// @version      11.6
+// @description  Full-screen terminal (full width layout) with unblocked copy/paste, manual text editing, user tracking, automated Smartsheet log submission via secure worker, special character restriction, centered tip below input, and updated scan match priority logic.
 // @match        https://atlas.na.aftx.amazonoperations.app/*
 // @connect      qifcr.eu.aftx.amazonoperations.app
 // @connect      aaacount.bambura-r.workers.dev
@@ -37,12 +37,13 @@
     let currentQifcrValues = new Set();
     let currentFnskuCounts = {};
     let currentBarcodeToFnskuMap = {};
+    let currentInventoryRecords = [];
     let savedData = GM_getValue('cycle_count_data', {});
 
     let isInventoryUnlocked = false;
     let cachedInventoryTableData = null;
 
-    // Inject CSS (Full width layout, larger font)
+    // Inject CSS
     const style = document.createElement('style');
     style.innerHTML = `
         html, body {
@@ -221,11 +222,12 @@
                                 <th>Barcode / LPN</th>
                                 <th>Matched FNSKU</th>
                                 <th>Status</th>
+                                <th>Wrong Scan</th>
                                 <th>Timestamp</th>
                             </tr>
                         </thead>
                         <tbody id="scanned-body">
-                            <tr><td colspan="6" style="color: #666;">No physical items scanned yet.</td></tr>
+                            <tr><td colspan="7" style="color: #666;">No physical items scanned yet.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -345,7 +347,8 @@
                     { columnId: 6544283420888964, value: item.barcode },
                     { columnId: 4292483607203716, value: item.matchedFnsku || 'N/A' },
                     { columnId: 8796083234574212, value: item.isRecognized ? 'TRUE' : 'FALSE' },
-                    { columnId: 611688044597124,  value: item.time || '' }
+                    { columnId: 611688044597124,  value: item.time || '' },
+                    { columnId: 999999999999999,  value: item.isWrongScan ? 'TRUE' : 'FALSE' }
                 ]
             }));
             postToSmartsheet(SCAN_SHEET_ID, scanRows);
@@ -511,31 +514,35 @@
 
         const validTargets = targetMap.filter(t => t.index !== -1);
         const displayHeaders = validTargets.map(t => t.name);
-        const asinColIdx = validTargets.findIndex(t => t.name === 'ASIN');
+
+        const fnskuIdx = targetMap.find(t => t.name === 'FNSKU')?.index;
+        const asinIdx = targetMap.find(t => t.name === 'ASIN')?.index;
+        const lpnIdx = targetMap.find(t => t.name === 'LPN')?.index;
         const qtyColIdx = validTargets.findIndex(t => t.name === 'QUANTITY');
 
         const rows = [];
         const extractedValues = new Set();
         const fnskuCounts = {};
         const barcodeToFnskuMap = {};
+        const inventoryRecords = [];
         let totalQuantity = 0;
 
         doc.querySelectorAll('tr').forEach(tr => {
             if (tr.querySelector('th') && !tr.querySelector('td')) return;
             const cells = tr.querySelectorAll('td');
             if (cells.length > 0) {
-                let primaryFnsku = '';
+                const fnskuVal = fnskuIdx !== undefined && cells[fnskuIdx] ? cells[fnskuIdx].textContent.trim().toUpperCase() : '';
+                const asinVal = asinIdx !== undefined && cells[asinIdx] ? cells[asinIdx].textContent.trim().toUpperCase() : '';
+                const lpnVal = lpnIdx !== undefined && cells[lpnIdx] ? cells[lpnIdx].textContent.trim().toUpperCase() : '';
+
+                let primaryFnsku = fnskuVal || asinVal;
                 let rowQty = 0;
-                const rowBarcodes = [];
 
                 const rowData = validTargets.map((target, idx) => {
                     const cell = cells[target.index];
                     const val = cell ? cell.textContent.trim().replace(/\s+/g, ' ') : '';
                     if (val && target.name !== 'QUANTITY') {
-                        const cleanVal = val.toUpperCase();
-                        extractedValues.add(cleanVal);
-                        rowBarcodes.push(cleanVal);
-                        if (target.name === 'FNSKU') primaryFnsku = cleanVal;
+                        extractedValues.add(val.toUpperCase());
                     }
                     if (idx === qtyColIdx) {
                         const parsedQty = parseInt(val, 10);
@@ -544,10 +551,18 @@
                     return val;
                 });
 
-                if (!primaryFnsku && asinColIdx !== -1) primaryFnsku = rowData[asinColIdx]?.toUpperCase() || '';
                 if (primaryFnsku) {
                     fnskuCounts[primaryFnsku] = (fnskuCounts[primaryFnsku] || 0) + rowQty;
-                    rowBarcodes.forEach(code => { barcodeToFnskuMap[code] = primaryFnsku; });
+                    if (fnskuVal) barcodeToFnskuMap[fnskuVal] = primaryFnsku;
+                    if (asinVal) barcodeToFnskuMap[asinVal] = primaryFnsku;
+                    if (lpnVal) barcodeToFnskuMap[lpnVal] = primaryFnsku;
+
+                    inventoryRecords.push({
+                        fnsku: fnskuVal,
+                        asin: asinVal,
+                        lpn: lpnVal,
+                        primaryFnsku: primaryFnsku
+                    });
                 }
                 if (rowData.some(val => val !== '')) rows.push(rowData);
             }
@@ -555,7 +570,7 @@
 
         return {
             headers: displayHeaders.length > 0 ? displayHeaders : ['FNSKU', 'ASIN', 'FCSKU', 'LPN', 'QUANTITY'],
-            rows, extractedValues, fnskuCounts, barcodeToFnskuMap, totalQuantity
+            rows, extractedValues, fnskuCounts, barcodeToFnskuMap, inventoryRecords, totalQuantity
         };
     }
 
@@ -575,12 +590,13 @@
     function renderScannedItems() {
         scannedCountEl.innerText = `${currentScannedItems.length} items`;
         if (currentScannedItems.length === 0) {
-            scannedBody.innerHTML = `<tr><td colspan="6" style="color: #666;">No physical items scanned yet.</td></tr>`;
+            scannedBody.innerHTML = `<tr><td colspan="7" style="color: #666;">No physical items scanned yet.</td></tr>`;
             return;
         }
         scannedBody.innerHTML = currentScannedItems.map((item, index) => {
             const statusTag = item.isRecognized ? `<span class="match-tag known">RECOGNIZED</span>` : `<span class="match-tag unknown">NOT IN QIFCR</span>`;
-            return `<tr><td style="color: #666;">${index + 1}</td><td style="color: #00f5d4; font-size: 14px;">${item.user || 'UNKNOWN'}</td><td class="item-tag">${item.barcode}</td><td class="asin-tag">${item.matchedFnsku || 'N/A'}</td><td>${statusTag}</td><td style="color: #888; font-size: 14px;">${item.time}</td></tr>`;
+            const wrongScanTag = item.isWrongScan ? `<span class="match-tag unknown">WRONG SCAN</span>` : `<span class="match-tag known">OK</span>`;
+            return `<tr><td style="color: #666;">${index + 1}</td><td style="color: #00f5d4; font-size: 14px;">${item.user || 'UNKNOWN'}</td><td class="item-tag">${item.barcode}</td><td class="asin-tag">${item.matchedFnsku || 'N/A'}</td><td>${statusTag}</td><td>${wrongScanTag}</td><td style="color: #888; font-size: 14px;">${item.time}</td></tr>`;
         }).reverse().join('');
     }
 
@@ -589,7 +605,7 @@
         const locations = Object.keys(fullLogs);
         if (locations.length === 0) { logDisplayArea.innerHTML = `<div style="color: #888; padding: 20px; text-align: center;">No stored logs available.</div>`; return; }
 
-        let tableHtml = `<table class="asin-table"><thead><tr><th>Location</th><th>User</th><th>Scanned Barcode</th><th>Matched FNSKU</th><th>Status</th><th>Scan Time</th></tr></thead><tbody>`;
+        let tableHtml = `<table class="asin-table"><thead><tr><th>Location</th><th>User</th><th>Scanned Barcode</th><th>Matched FNSKU</th><th>Status</th><th>Wrong Scan</th><th>Scan Time</th></tr></thead><tbody>`;
         locations.reverse().forEach(locKey => {
             const entry = fullLogs[locKey];
             const user = entry.user || 'UNKNOWN';
@@ -599,16 +615,17 @@
             const rowspanAttr = totalRows > 0 ? `rowspan="${totalRows}"` : '';
 
             if (items.length === 0 && !summary) {
-                tableHtml += `<tr><td class="asin-tag">${locKey}</td><td style="color: #00f5d4; font-size: 14px;">${user}</td><td colspan="4" style="color: #666;">No items scanned</td></tr>`;
+                tableHtml += `<tr><td class="asin-tag">${locKey}</td><td style="color: #00f5d4; font-size: 14px;">${user}</td><td colspan="5" style="color: #666;">No items scanned</td></tr>`;
             } else {
                 items.forEach((item, i) => {
                     const statusTag = item.isRecognized ? `<span class="match-tag known">RECOGNIZED</span>` : `<span class="match-tag unknown">NOT IN QIFCR</span>`;
-                    tableHtml += `<tr>${i === 0 ? `<td class="asin-tag" ${rowspanAttr} style="vertical-align: top; border-right: 1px solid #2a2a36;">${locKey}</td>` : ''}<td style="color: #00f5d4; font-size: 14px;">${item.user || user}</td><td class="item-tag">${item.barcode}</td><td class="asin-tag">${item.matchedFnsku || 'N/A'}</td><td>${statusTag}</td><td style="color: #888; font-size: 14px;">${item.time}</td></tr>`;
+                    const wrongScanTag = item.isWrongScan ? `<span class="match-tag unknown">WRONG SCAN</span>` : `<span class="match-tag known">OK</span>`;
+                    tableHtml += `<tr>${i === 0 ? `<td class="asin-tag" ${rowspanAttr} style="vertical-align: top; border-right: 1px solid #2a2a36;">${locKey}</td>` : ''}<td style="color: #00f5d4; font-size: 14px;">${item.user || user}</td><td class="item-tag">${item.barcode}</td><td class="asin-tag">${item.matchedFnsku || 'N/A'}</td><td>${statusTag}</td><td>${wrongScanTag}</td><td style="color: #888; font-size: 14px;">${item.time}</td></tr>`;
                 });
                 if (summary) {
                     const isFirst = items.length === 0;
                     const isMismatch = summary.isMismatch;
-                    tableHtml += `<tr class="summary-row">${isFirst ? `<td class="asin-tag" ${rowspanAttr} style="vertical-align: top; border-right: 1px solid #2a2a36;">${locKey}</td>` : ''}${isFirst ? `<td style="color: #00f5d4; font-size: 14px; vertical-align: top; border-right: 1px solid #2a2a36;">${user}</td>` : ''}<td colspan="3" style="color: #ffb703; font-weight: bold;">FNSKU SUMMARY: Fetched: ${summary.totalFetchedQty} | Scanned: ${summary.totalScannedQty} (Mismatch: ${isMismatch ? 'YES' : 'NO'})</td><td style="color: ${isMismatch ? '#ff4d4d' : '#00f5d4'}; font-weight: bold;">Unique FNSKUs: ${Object.keys(summary.fnskuCounts || {}).length} (${summary.finishedAt || ''})</td></tr>`;
+                    tableHtml += `<tr class="summary-row">${isFirst ? `<td class="asin-tag" ${rowspanAttr} style="vertical-align: top; border-right: 1px solid #2a2a36;">${locKey}</td>` : ''}${isFirst ? `<td style="color: #00f5d4; font-size: 14px; vertical-align: top; border-right: 1px solid #2a2a36;">${user}</td>` : ''}<td colspan="4" style="color: #ffb703; font-weight: bold;">FNSKU SUMMARY: Fetched: ${summary.totalFetchedQty} | Scanned: ${summary.totalScannedQty} (Mismatch: ${isMismatch ? 'YES' : 'NO'})</td><td style="color: ${isMismatch ? '#ff4d4d' : '#00f5d4'}; font-weight: bold;">Unique FNSKUs: ${Object.keys(summary.fnskuCounts || {}).length} (${summary.finishedAt || ''})</td></tr>`;
                 }
             }
         });
@@ -621,7 +638,7 @@
         errorEl.innerText = '';
         inputEl.value = '';
         if (mode === 'LOCATION') {
-            currentLocation = null; currentScannedItems = []; currentQifcrValues.clear(); currentFnskuCounts = {}; currentBarcodeToFnskuMap = {};
+            currentLocation = null; currentScannedItems = []; currentQifcrValues.clear(); currentFnskuCounts = {}; currentBarcodeToFnskuMap = {}; currentInventoryRecords = [];
             activeLocText.innerText = 'NO LOCATION ACTIVE'; activeLocText.style.color = '#888';
             inputLabelEl.innerText = 'Scan Location Barcode (Must start with P-1)';
             inputEl.placeholder = 'Scan bin/location barcode starting with P-1...';
@@ -716,6 +733,7 @@
         currentQifcrValues.clear();
         currentFnskuCounts = {};
         currentBarcodeToFnskuMap = {};
+        currentInventoryRecords = [];
         renderScannedItems();
 
         activeLocText.innerText = `LOCATION: ${currentLocation}`;
@@ -730,6 +748,7 @@
             currentQifcrValues = inventoryTable.extractedValues;
             currentFnskuCounts = inventoryTable.fnskuCounts;
             currentBarcodeToFnskuMap = inventoryTable.barcodeToFnskuMap;
+            currentInventoryRecords = inventoryTable.inventoryRecords || [];
 
             savedData = GM_getValue('cycle_count_data', {});
             savedData[currentLocation] = {
@@ -793,7 +812,7 @@
         const fullLogs = GM_getValue('cycle_count_data', {});
         const locations = Object.keys(fullLogs);
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        let scanRows = [['Location', 'User', 'Location Timestamp', 'Scanned Barcode', 'Matched FNSKU', 'Is Recognized', 'Scan Time']];
+        let scanRows = [['Location', 'User', 'Location Timestamp', 'Scanned Barcode', 'Matched FNSKU', 'Is Recognized', 'Wrong Scan', 'Scan Time']];
         let summaryRows = [['Location', 'User', 'Location Timestamp', 'FNSKU', 'Fetched FNSKU Qty', 'Scanned FNSKU Qty', 'FNSKU Variance', 'Is FNSKU Mismatch', 'Location Overall Mismatch', 'Finished At']];
 
         locations.forEach(locKey => {
@@ -801,7 +820,7 @@
             const user = entry.user || 'N/A';
             const locTime = entry.timestamp ? new Date(entry.timestamp).toISOString() : '';
             (entry.scannedItems || []).forEach(item => {
-                scanRows.push([locKey, item.user || user, locTime, item.barcode, item.matchedFnsku || 'N/A', item.isRecognized ? 'TRUE' : 'FALSE', item.time || '']);
+                scanRows.push([locKey, item.user || user, locTime, item.barcode, item.matchedFnsku || 'N/A', item.isRecognized ? 'TRUE' : 'FALSE', item.isWrongScan ? 'TRUE' : 'FALSE', item.time || '']);
             });
             if (entry.summary && entry.summary.fnskuCounts) {
                 Object.keys(entry.summary.fnskuCounts).forEach(fnskuKey => {
@@ -848,10 +867,41 @@
             }
 
             const timeString = new Date().toLocaleTimeString();
-            let isRecognized = currentQifcrValues.has(value);
+            let isRecognized = false;
+            let isWrongScan = false;
             let matchedFnsku = currentBarcodeToFnskuMap[value] || null;
 
-            if (!matchedFnsku) {
+            const matchedRecord = currentInventoryRecords.find(rec => 
+                (rec.lpn && rec.lpn === value) || 
+                (rec.fnsku && rec.fnsku === value) || 
+                (rec.asin && rec.asin === value)
+            );
+
+            if (matchedRecord) {
+                isRecognized = true;
+                matchedFnsku = matchedRecord.primaryFnsku;
+
+                const hasLpn = Boolean(matchedRecord.lpn);
+                const asinSameAsFnsku = matchedRecord.asin && matchedRecord.fnsku && (matchedRecord.asin === matchedRecord.fnsku);
+
+                if (hasLpn) {
+                    if (value === matchedRecord.lpn) {
+                        isWrongScan = false;
+                    } else {
+                        isWrongScan = true;
+                    }
+                } else {
+                    if (asinSameAsFnsku) {
+                        isWrongScan = false;
+                    } else {
+                        if (value === matchedRecord.fnsku) {
+                            isWrongScan = false;
+                        } else if (value === matchedRecord.asin) {
+                            isWrongScan = true;
+                        }
+                    }
+                }
+            } else {
                 statusEl.innerText = 'RESOLVING EAN...';
                 statusEl.style.color = '#ffb703';
 
@@ -870,6 +920,7 @@
                 barcode: value,
                 matchedFnsku: matchedFnsku,
                 isRecognized: isRecognized,
+                isWrongScan: isWrongScan,
                 time: timeString
             });
 
