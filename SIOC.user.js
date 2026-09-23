@@ -5,6 +5,8 @@
 // @description  Evaluates SPTC shipments for Cage, SIOC, and Oversize conditions based on QIFCR live dimensions.
 // @match        https://sptc.eu.aftx.amazonoperations.app/*
 // @match        https://sptc.eu.aft.amazonoperations.app/*
+// @updateURL    https://github.com/RBCeva/TM/raw/refs/heads/main/CSX.user.js
+// @downloadURL  https://github.com/RBCeva/TM/raw/refs/heads/main/CSX.user.js
 // @connect      qifcr.eu.aftx.amazonoperations.app
 // @grant        GM_xmlhttpRequest
 // @run-at       document-end
