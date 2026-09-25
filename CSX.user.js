@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WMS - CSX Stealth Gatekeeper & FCR Connector (V21.0)
 // @namespace    http://tampermonkey.net/
-// @version      21.0.0
+// @version      22.0.0
 // @description  Targeted HTML parsing for Amazon AUI a-keyvalue tables.
 // @match        https://taskui-web.eu.aftx.amazonoperations.app/*
 // @match        https://data.pendo.aft.amazon.dev/data/rec/*
