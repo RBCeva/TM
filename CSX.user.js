@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WMS - CSX Stealth Gatekeeper & FCR Connector (V21.0)
 // @namespace    http://tampermonkey.net/
-// @version      22.0.0
+// @version      23.0.0
 // @description  Targeted HTML parsing for Amazon AUI a-keyvalue tables.
 // @match        https://taskui-web.eu.aftx.amazonoperations.app/*
 // @match        https://data.pendo.aft.amazon.dev/data/rec/*
@@ -79,14 +79,16 @@
             const doc = new DOMParser().parseFromString(html, 'text/html');
             let maxDim = 0;
 
-            // Target <th> containing 'Dimensions' or 'Dimension'
             const headers = doc.querySelectorAll('table.a-keyvalue th, table th');
             headers.forEach(th => {
-                if (th.textContent.trim().toLowerCase().includes('dimension')) {
+                const text = th.textContent.trim().toLowerCase();
+                
+                // Strict match for Dimension key headers
+                if (text === 'dimensions' || text === 'dimension' || text === 'item dimensions') {
                     const td = th.nextElementSibling;
                     if (td) {
                         const rawText = td.textContent.trim();
-                        // Extract X x Y x Z pattern (e.g., 15.00 x 98.00 x 35.00 CM)
+                        // Extract X x Y x Z pattern (e.g., 19.00 x 53.00 x 44.00 CM)
                         const matches = rawText.match(/(\d+(?:[\.,]\d+)?)\s*[xX*×]\s*(\d+(?:[\.,]\d+)?)\s*[xX*×]\s*(\d+(?:[\.,]\d+)?)/);
                         if (matches) {
                             const d1 = parseFloat(matches[1].replace(',', '.'));
@@ -98,18 +100,6 @@
                 }
             });
 
-            // Global fallback pattern match
-            if (maxDim === 0) {
-                const bodyText = doc.body ? doc.body.textContent : html;
-                const patternMatch = bodyText.match(/(\d+(?:[\.,]\d+)?)\s*[xX*×]\s*(\d+(?:[\.,]\d+)?)\s*[xX*×]\s*(\d+(?:[\.,]\d+)?)/);
-                if (patternMatch) {
-                    const d1 = parseFloat(patternMatch[1].replace(',', '.'));
-                    const d2 = parseFloat(patternMatch[2].replace(',', '.'));
-                    const d3 = parseFloat(patternMatch[3].replace(',', '.'));
-                    maxDim = Math.max(d1, d2, d3);
-                }
-            }
-
             return maxDim;
         }
 
@@ -118,13 +108,16 @@
             const doc = new DOMParser().parseFromString(html, 'text/html');
             let maxWeight = 0;
 
-            // Target <th> containing 'Weight'
             const headers = doc.querySelectorAll('table.a-keyvalue th, table th');
             headers.forEach(th => {
-                if (th.textContent.trim().toLowerCase().includes('weight')) {
+                const text = th.textContent.trim().toLowerCase();
+
+                // Strict match for Weight key headers
+                if (text === 'weight' || text === 'package weight' || text === 'item weight') {
                     const td = th.nextElementSibling;
                     if (td) {
                         const rawText = td.textContent.trim();
+                        // Extract numeric value from connected td (e.g., "15.50 kilograms" -> 15.50)
                         const match = rawText.match(/(\d+(?:[\.,]\d+)?)/);
                         if (match) {
                             maxWeight = parseFloat(match[1].replace(',', '.'));
@@ -132,16 +125,6 @@
                     }
                 }
             });
-
-            // Global fallback pattern match
-            if (maxWeight === 0) {
-                const textContent = doc.body ? doc.body.textContent : html;
-                const weightRegex = /(\d+(?:[\.,]\d+)?)\s*(?:kg|kilograms|lbs|pounds)/gi;
-                const match = weightRegex.exec(textContent);
-                if (match) {
-                    maxWeight = parseFloat(match[1].replace(',', '.'));
-                }
-            }
 
             return maxWeight;
         }
